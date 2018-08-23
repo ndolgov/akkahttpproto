@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package net.ndolgov.akkahttpproto.example.api;
+
+import "google/api/annotations.proto";
+
+service ObjectStoreService {
+    rpc getObject (GetObjectRequest) returns (GetObjectResponse) {
+        option (google.api.http) = {
+            get: "/tree/trunk/branch/leaf/{userId}/padding/{objectId}/"
+        };
+    }
+
+    rpc createObject (CreateObjectRequest) returns (CreateObjectResponse) {
+        option (google.api.http) = {
+            post: "/tree/trunk/branch/leaf/{userId}"
+            body: "blob"
+        };
+    }
+}
+
+message GetObjectRequest {
+    string userId = 1;
+    string objectId = 2;
+}
+
+message GetObjectResponse {
+    int32 status = 1;
+    bytes blob = 2; // only if status == 200
+}
+
+message CreateObjectRequest {
+    string userId = 1;
+    bytes blob = 2;
+}
+
+message CreateObjectResponse {
+    int32 status = 1;
+    string objectId = 2; // only if status == 200
+}
