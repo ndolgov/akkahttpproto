@@ -2,6 +2,7 @@ package net.ndolgov.akkahttproto.generator
 
 import com.google.api.HttpRule.PatternCase
 import com.google.api.{AnnotationsProto, HttpRule}
+import com.google.protobuf.Descriptors.FieldDescriptor.Type
 import com.google.protobuf.Descriptors.{FileDescriptor, MethodDescriptor, ServiceDescriptor}
 import com.google.protobuf.ExtensionRegistry
 import com.google.protobuf.compiler.PluginProtos.{CodeGeneratorRequest, CodeGeneratorResponse}
@@ -51,7 +52,7 @@ object GatewayGenerator extends protocbridge.ProtocCodeGenerator with Descriptor
       .add(s"package ${fileDesc.scalaPackageName}")
       .newline
       .add(
-        "import akka.http.scaladsl.model.StatusCodes",
+        "import akka.http.scaladsl.model.{HttpEntity, MediaTypes, StatusCodes}",
         "import akka.http.scaladsl.server.Directives.{as, complete, entity, get, onComplete, path, pathPrefix, post, _}",
         "import akka.http.scaladsl.server.Route",
         "import org.slf4j.LoggerFactory",
@@ -64,6 +65,7 @@ object GatewayGenerator extends protocbridge.ProtocCodeGenerator with Descriptor
       .newline
       .add(
         "import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport",
+        "import akka.http.scaladsl.marshalling.{PredefinedToEntityMarshallers, ToEntityMarshaller}",
         "import spray.json.{DefaultJsonProtocol, RootJsonFormat}"
       )
       .add(
@@ -140,8 +142,8 @@ object GatewayGenerator extends protocbridge.ProtocCodeGenerator with Descriptor
     val responseFieldCount = md.getOutputType.getFields.size()
 
     printer.
-      //add(s"implicit val ${requestType}Marshaller: RootJsonFormat[$requestType] = jsonFormat$requestFieldCount($requestType.apply)").
-      add(s"implicit val ${responseType}Marshaller: RootJsonFormat[$responseType] = jsonFormat$responseFieldCount($responseType.apply)")
+      //add(s"implicit lazy val ${requestType}Marshaller: FromEntityUnmarshaller[$requestType] = PredefinedFromEntityUnmarshallers.byteArrayUnmarshaller.map($requestType.parseFrom)").
+      add(s"implicit lazy val ${responseType}Marshaller: ToEntityMarshaller[$responseType] = PredefinedToEntityMarshallers.ByteArrayMarshaller.wrap(MediaTypes.`application/octet-stream`)(_.toByteArray)")
   }
 
   private def generateMessageMarshallers(marshallersClass: String, methods: mutable.Buffer[MethodDescriptor]): PrinterEndo = { printer =>
@@ -221,13 +223,29 @@ object GatewayGenerator extends protocbridge.ProtocCodeGenerator with Descriptor
     val requestType = method.method.getInputType.getName
 
     if (method.httpBody.isDefined) {
-      printer.
-        add(s"entity(as[Array[Byte]]) { body =>"). // TODO support actual Request field conversion
-        indent.
-        add(s"val request = $requestType(${method.path.requestParams()}, ${method.httpBody.get} = ByteString.copyFrom(body))").
-        call(generateRequestCompletion(method.method)).
-        add("}"). // entity
-        outdent
+      val bodyType = method.method.getInputType.findFieldByName(method.httpBody.get).getType
+
+      if (bodyType == Type.BYTES) {
+        printer.
+          add(s"extractRequestEntity { entity =>").
+          indent.
+          add(s"entity match {").
+          indent.
+          add(s"case strict: HttpEntity.Strict =>").
+          indent.
+          add(s"val body = ByteString.copyFrom(strict.data.toArray)").
+          add(s"val request = $requestType(${method.path.requestParams()}, ${method.httpBody.get} = body)").
+          call(generateRequestCompletion(method.method)).
+          newline.
+          add("case _ => complete(httpErrorResponse(StatusCodes.BadRequest, \"Unexpected request body type\"))").
+          outdent.
+          add("}"). // e m
+          outdent.
+          add("}"). // eRE
+          outdent
+      } else {
+        throw new IllegalArgumentException(s"Unsupported HTTP request body type: $bodyType") // TODO support actual Request field conversion
+      }
     } else {
       printer.
         add(s"val request = $requestType(${method.path.requestParams()})").
@@ -235,7 +253,6 @@ object GatewayGenerator extends protocbridge.ProtocCodeGenerator with Descriptor
         call(generateRequestCompletion(method.method)).
         add("}"). // entity
         outdent
-
     }
   }
 

@@ -12,9 +12,6 @@ import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
-case class TestResponseA1(success: Boolean, requestId: Long, result: String)
-class TestResponseA2(success: Boolean, requestId: Long, result: String)
-
 class AkkaHttpSkeletonTest extends FlatSpec with Assertions {
   private val logger = LoggerFactory.getLogger(classOf[AkkaHttpSkeletonTest])
   private val PORT = 20000
@@ -25,19 +22,27 @@ class AkkaHttpSkeletonTest extends FlatSpec with Assertions {
 
   it should "support two service endpoints on the same port" in {
     val server = AkkaHttpServer(HOSTNAME, PORT, Some(serverExecutorSvc()))
-    server.start(ec =>
+    val f= server.start(ec =>
       new ObjectStoreServiceHttpEndpoint(
         new ObjectStoreServiceImpl()(ec)).
       endpointRoutes())
+
+    Await.ready(f, Duration.create(5, TimeUnit.SECONDS))
 
     val client = AkkaHttpSkeletonClient(s"http://$HOSTNAME:$PORT/tree/trunk/branch/leaf", clientExecutorSvc())
 
     try {
       implicit val clientExecutionContext: ExecutionContext = client.executionContext()
-      val fa = handle(client.createObject(CreateObjectRequest(userId, ByteString.copyFromUtf8("covfefe"))))
-      val fb = handle(client.getObject(GetObjectRequest(userId, userId)))
 
-      Await.ready(fa zip fb, Duration.create(5, TimeUnit.SECONDS))
+      val body = "covfefe"
+
+      val createAndGet =
+        handle(client.createObject(CreateObjectRequest(userId, ByteString.copyFrom(body.getBytes())))).
+        flatMap(cor =>
+          handle(client.getObject(GetObjectRequest(userId, cor.objectId)))).
+        map(gor => new String(gor.blob.toByteArray))
+
+      assert(Await.result(createAndGet, Duration.create(5, TimeUnit.SECONDS)) == body)
     } finally {
       client.stop()
       server.stop()
@@ -58,10 +63,6 @@ class AkkaHttpSkeletonTest extends FlatSpec with Assertions {
 
   private def serverExecutorSvc(): ExecutorService = {
     executorSvc("rpc-server-%d")
-  }
-
-  private def gatewayExecutorSvc(): ExecutorService = {
-    executorSvc("rpc-gateway-%d")
   }
 
   private def clientExecutorSvc(): ExecutorService =

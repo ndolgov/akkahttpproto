@@ -29,8 +29,6 @@ val akka_http_proto_example_web = Project(id = akka_http_proto_example_web_id, b
   settings(
     libraryDependencies ++= Seq(
       "net.ndolgov" %% "akka-http-proto-runtime" % project_version % "compile,protobuf",
-      "com.fasterxml.jackson.core" % "jackson-databind" % jackson_version % Test,
-      "com.fasterxml.jackson.module" %% "jackson-module-scala" % jackson_version % Test,
       "org.apache.httpcomponents" % "httpasyncclient" % http_client_version % Test,
       "org.apache.httpcomponents" % "httpcore" % http_client_version % Test,
       "org.scalatest" %% "scalatest" % scalatest_version % Test,

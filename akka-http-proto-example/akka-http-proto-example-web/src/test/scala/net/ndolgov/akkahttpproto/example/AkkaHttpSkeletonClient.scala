@@ -2,7 +2,6 @@ package net.ndolgov.akkahttpproto.example
 
 import java.util.concurrent.ExecutorService
 
-import net.ndolgov.akkahttpproto.example.JsonMarshaller._
 import net.ndolgov.akkahttpproto.example.api.objectstore.{CreateObjectRequest, CreateObjectResponse, GetObjectRequest, GetObjectResponse}
 import org.apache.http.HttpResponse
 import org.apache.http.client.ResponseHandler
@@ -28,32 +27,30 @@ final class AkkaHttpSkeletonClient(client: CloseableHttpClient, url: String)(imp
   def executionContext() : ExecutionContext = ec
 
   def getObject(request: GetObjectRequest) : Future[GetObjectResponse] = {
-    get(request, s"/${request.userId}/padding/${request.objectId}", classOf[GetObjectResponse])
+    get(request, s"/${request.userId}/padding/${request.objectId}", classOf[GetObjectResponse], bytes => GetObjectResponse.parseFrom(bytes))
   }
   def createObject(request: CreateObjectRequest) : Future[CreateObjectResponse] = {
-    post(request, s"/${request.userId}", request.blob.toByteArray, classOf[CreateObjectResponse])
+    post(request, s"/${request.userId}", request.blob.toByteArray, classOf[CreateObjectResponse], bytes => CreateObjectResponse.parseFrom(bytes))
   }
 
-  private def post[REQUEST, RESPONSE](request: REQUEST, path: String, body: Array[Byte], clazz: Class[RESPONSE]) : Future[RESPONSE] = {
+  private def post[REQUEST, RESPONSE](request: REQUEST, path: String, body: Array[Byte], clazz: Class[RESPONSE], um: Array[Byte] => RESPONSE) : Future[RESPONSE] = Future {
+    logger.info(s"Sending $request")
+
+    val httpRequest = new HttpPost(url + path)
+    httpRequest.setEntity(new ByteArrayEntity(body))
+    client.execute(httpRequest, handler(um, clazz))
+  }
+
+  private def get[REQUEST, RESPONSE](request: REQUEST, path: String, clazz: Class[RESPONSE], um: Array[Byte] => RESPONSE) : Future[RESPONSE] = {
     Future {
       logger.info(s"Sending $request")
 
-      val httpRequest = new HttpPost(url + path)
-      httpRequest.setEntity(new ByteArrayEntity(body))
-      client.execute(httpRequest, handler(clazz))
+      val httpRequest = new HttpGet(url + path)
+      client.execute(httpRequest, handler(um, clazz))
     }
   }
 
-  private def get[REQUEST, RESPONSE](request: REQUEST, path: String, clazz: Class[RESPONSE]) : Future[RESPONSE] = {
-    Future {
-      logger.info(s"Sending $request")
-
-      val httpRequest = new HttpGet(path)
-      client.execute(httpRequest, handler(clazz))
-    }
-  }
-
-  private def handler[RESPONSE](clazz: Class[RESPONSE]): ResponseHandler[RESPONSE] = {
+  private def handler[RESPONSE](um: Array[Byte] => RESPONSE, clazz: Class[RESPONSE]): ResponseHandler[RESPONSE] = {
     (httpResponse: HttpResponse) => {
       val status = httpResponse.getStatusLine.getStatusCode
       logger.info(s"Handling response with status $status")
@@ -67,9 +64,7 @@ final class AkkaHttpSkeletonClient(client: CloseableHttpClient, url: String)(imp
         throw new RuntimeException("No response body found")
       }
 
-      val response = fromJson(EntityUtils.toString(entity), clazz)
-      logger.info(s"Received $response")
-      response
+      um(EntityUtils.toByteArray(entity))
     }
   }
 }
